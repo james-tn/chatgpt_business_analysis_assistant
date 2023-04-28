@@ -3,6 +3,6 @@
 name: OpenAIWorkshop
 services:
   web:
-    project: ./scenarios/natural_language_query/streamlit
+    project: ./src
     language: py
     host: appservice
