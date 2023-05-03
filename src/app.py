@@ -14,25 +14,24 @@ from dotenv import load_dotenv
 from pathlib import Path  # Python 3.6+ only
 
 system_message="""
-You are a smart AI assistant to help answer business questions based on analyzing data. 
-You can plan solving the question with one more multiple thought step. At each thought step, you can write python code to analyze data to assist you. Observe what you get at each step to plan for the next step.
-You are given following utilities to help you retrieve data and commmunicate your result to end user.
-1. execute_sql(sql_query: str): A Python function can query data from the database given the query that you need to create which need to be syntactically correct for {sql_engine}. It return a Python pandas dataframe contain the results of the query.
-2. Use plotly library for data visualization. 
-3. Use observe(label: str, data: any) utility function to observe data under the label for your evaluation. Use observe() function instead of print() as this is executed in streamlit environment. Due to system limitation, you will only see the first 10 rows of the dataset.
-4. To communicate with user, use show() function on data, text and plotly figure. show() is a utility function that can render different types of data to end user. Remember, you don't see data with show(), only user does. You see data with observe()
-    - If you want to show  user a plotly visualization, then use ```show(fig)`` 
-    - If you want to show user data which is a text or a pandas dataframe or a list, use ```show(data)```
-    - Never use print(). User don't see anything with print()
-5. Lastly, don't forget to deal with data quality problem. You should apply data imputation technique to deal with missing data or NAN data.
-6. Always follow the flow of Thought: , Observation:, Action: and Answer: as in template below strictly. 
+You are a Open AI assistant to help answer business questions by writing python code to analyze data. 
+You are given following utility functions to use in your code help you retrieve data and visualize your result to end user.
+    1. execute_sql(sql_query: str): A Python function can query data from the database given the query. 
+        - To use this function that you need to create a sql query which has to be syntactically correct for {sql_engine}. 
+        - You need to utilize the tables' schema provided under <<data_sources>> in preparing the query.
+        - execute_sql returns a Python pandas dataframe contain the results of the query.
+    2. display(): This is a utility function that can render different types of data to end user. 
+        - If you want to show  user a plotly visualization, then use ```display(fig)`` 
+        - If you want to show user data which is a text or a pandas dataframe or a list, use ```display(data)```
+Remember to format Python code query as in ```python\n PYTHON CODE HERE ``` in your response.
+Only use display() to visualize or print out result. Only use plotly for visualization.
 
 """
 
 few_shot_examples="""
 <<Template>>
 Question: User Question
-Thought 1: Your thought here.
+Thought: Your thought here.
 Action: 
 ```python
 #Import neccessary libraries here
@@ -63,10 +62,14 @@ show(step2_df)
 ```
 Observation: 
 step2_df is displayed here
-Answer: Your final answer and comment for the question
+Finish: Your final answer and comment for the question
 <</Template>>
 
 """
+few_shot_examples=""
+# Your final answer and comment for the question. Remember you cannot observe graphic chart, so always observe from python or pandas data object.
+# You also cannot see more than 10 rows of data, so rely on summary statistics. Alsways use Python for computation, never compute result youself.
+
 env_path = Path('.') / 'secrets.env'
 load_dotenv(dotenv_path=env_path)
 
@@ -79,8 +82,8 @@ temperature=0
 
 sqllite_db_path= os.environ.get("SQLITE_DB_PATH","data/northwind.db")
 
-extract_patterns=[("Thought:",r'(Thought \d+):\s*(.*?)(?:\n|$)'), ('Action:',r"```python\n(.*?)```"),("Answer:",r'([Aa]nswer:) (.*)')]
-
+# extract_patterns=[("Thought:",r'(Thought \d+):\s*(.*?)(?:\n|$)'), ('Action:',r"```python\n(.*?)```")]
+extract_patterns=[('python',r"```python\n(.*?)```")]
 extractor = ChatGPT_Handler(extract_patterns=extract_patterns)
 faq_dict = {  
     "ChatGPT": [  
@@ -193,4 +196,4 @@ with st.sidebar:
                 if "AZURE_OPENAI" not in key and "settings" and "SQL" not in key : 
                     del st.session_state[key]  
 
-            analyzer.run(question,show_code,show_prompt, col1)  
+            analyzer.python_run(question,show_code,show_prompt, col1)  

@@ -12,7 +12,8 @@ import re
 import json
 from sqlalchemy import create_engine  
 import sqlalchemy as sql
-from plotly.graph_objects import Figure
+from plotly.graph_objects import Figure as PlotlyFigure
+from matplotlib.figure import Figure as MatplotFigure
 import time
 
 def get_table_schema(sql_query_tool, sql_engine='sqlite'):
@@ -80,6 +81,7 @@ class ChatGPT_Handler: #designed for chatcompletion API
         self.token_limit= token_limit
         self.gpt_deployment=gpt_deployment
         self.temperature=temperature
+        # self.conversation_history = []
         self.extract_patterns=extract_patterns
     def _call_llm(self,prompt, stop):
         response = openai.ChatCompletion.create(
@@ -89,44 +91,50 @@ class ChatGPT_Handler: #designed for chatcompletion API
         max_tokens=self.max_response_tokens,
         stop=stop
         )
-            
-        llm_output = response['choices'][0]['message']['content']
+        try:
+            llm_output = response['choices'][0]['message']['content']
+        except:
+            llm_output=""
+
         return llm_output
+    def extract_code_and_comment(self,entire_input, python_codes):
+        # print("entire_input: \n", entire_input)
+        remaing_input = entire_input
+        comments=[]
+        for python_code in python_codes:
+            temp_python_code = "```python\n"+python_code+"```"
+            text_before = remaing_input.split(temp_python_code)[0]
+            # text_before = re.findall(r"^(.*?)```python", remaing_input, re.DOTALL)[0].strip()
+
+            # print("text_before\n",text_before)
+            comments.append(text_before)
+            remaing_input = remaing_input.split(temp_python_code)[1]
+            # remaing_input = re.findall(r"```(.*)$", remaing_input, re.DOTALL)[0].strip()
+
+
+            # print("remaing_input \n", remaing_input)
+        return comments, remaing_input
     def extract_output(self, text_input):
-            output={}
-            if len(text_input)==0:
-                return output
+            # print("text_input\n",text_input)
+            outputs=[]
             for pattern in self.extract_patterns: 
-                if "sql" in pattern[1]:
-
-                    sql_query=""
-                    sql_result = re.findall(pattern[1], text_input, re.DOTALL)
-
-                    if len(sql_result)>0:
-                        sql_query=sql_result[0]
-                        output[pattern[0]]= sql_query
-                    else:
-                        return output
-                    text_before = text_input.split(sql_query)[0].strip("\n").strip("```sql").strip("\n")
-
-                    if text_before is not None and len(text_before)>0:
-                        output["text_before"]=text_before
-                    text_after =text_input.split(sql_query)[1].strip("\n").strip("```")
-                    if text_after is not None and len(text_after)>0:
-                        output["text_after"]=text_after
-                    return output
-
                 if "python" in pattern[1]:
-                    result = re.findall(pattern[1], text_input, re.DOTALL)
-                    if len(result)>0:
-                        output[pattern[0]]= result[0]
-                else:
 
-                    result = re.search(pattern[1], text_input,re.DOTALL)
-                    if result:  
-                        output[result.group(1)]= result.group(2)
+                    python_codes = re.findall(pattern[1], text_input, re.DOTALL)
+                    # print("python codes len ", len(python_codes))
+        
+                    # split_text = re.split(pattern[1], text_input, re.DOTALL)
+                    # print("split_text len ", len(split_text))
+                    # print("split_text \n ", split_text)
 
-            return output
+                    # text_after =split_text[-1]
+                    # # for i in range(python_codes):
+                    comments, text_after= self.extract_code_and_comment(text_input, python_codes)
+                    # print("text_after ", text_after)
+                    for comment, code in zip(comments, python_codes):
+                        outputs.append({"python":code, "comment":comment})
+                    outputs.append({"text_after":text_after})
+            return outputs
 
 class SQL_Query(ChatGPT_Handler):
     def __init__(self, system_message="",data_sources="",db_path=None,driver=None,dbserver=None, database=None, db_user=None ,db_password=None, **kwargs):
@@ -163,6 +171,7 @@ class SQL_Query(ChatGPT_Handler):
         if limit is not None:  
             result = result.head(limit)  # limit to save memory  
   
+        # session.close()  
         return result  
 
 
@@ -191,57 +200,52 @@ class AnalyzeGPT(ChatGPT_Handler):
             old_user_content= self.conversation_history.pop() #removing old history
             old_user_content=old_user_content['content']+"\n"
         self.conversation_history.append({"role": "user", "content": old_user_content+updated_user_content})
+        # print("prompt input ", self.conversation_history)
         n=0
         try:
             llm_output = self._call_llm(self.conversation_history, stop)
             # print("llm_output \n", llm_output)
 
         except Exception as e:
+            if "context_length_exceeded" in str(e):
+                print(f"Context length exceeded")
+                return "OPENAI_ERROR"  
             time.sleep(8) #sleep for 8 seconds
             while n<5:
                 try:
                     llm_output = self._call_llm(self.conversation_history, stop)
                 except Exception as e:
                     n +=1
-                    print("error calling open AI, I am retrying 5 attempts , attempt ", n)
+
+                    print(f"error calling open AI, I am retrying 5 attempts , attempt {n}")
                     time.sleep(8) #sleep for 8 seconds
-                    print(e)
+                    print(str(e))
 
             llm_output = "OPENAI_ERROR"     
              
     
-        # print("llm_output: ", llm_output)
         output = self.content_extractor.extract_output(llm_output)
         if len(output)==0 and llm_output != "OPENAI_ERROR": #wrong output format
             llm_output = "WRONG_OUTPUT_FORMAT"
 
-            
 
         return llm_output,output
-
-    def run(self, question: str, show_code,show_prompt,st) -> any:
-        import numpy as np
-        import plotly.express as px
-        import plotly.graph_objs as go
-        import pandas as pd
-
-        st.write(f"Question: {question}")
-
+    def python_run(self, question: str, show_code,show_prompt,st) -> any:
+        st.write(f"User: {question}")
         def execute_sql(query):
             return self.sql_query_tool.execute_sql_query(query)
-        observation=None
-        def show(data):
-            if type(data) is Figure:
+        # def print(data):
+        #     show(data)
+        def display(data):
+            if type(data) is PlotlyFigure:
                 st.plotly_chart(data)
+            elif type(data) is MatplotFigure:
+                st.pyplot(data)
             else:
                 st.write(data)
-            i=0
-            for key in self.st.session_state.keys():
-                if "show" in key:
-                    i +=1
-                self.st.session_state[f'show{i}']=data 
-                if type(data) is not Figure:
-                    self.st.session_state[f'observation: show_to_user{i}']=data
+            # self.st.session_state[f'observation:show']="showed some result to user"
+        # def print(data):
+        #     show(data)
         def observe(name, data):
             try:
                 data = data[:10] # limit the print out observation to 15 rows
@@ -252,111 +256,45 @@ class AnalyzeGPT(ChatGPT_Handler):
         max_steps = 15
         count =1
 
-        finish = False
-        new_input= f"Question: {question}"
-        while not finish:
-
-            llm_output,next_steps = self.get_next_steps(new_input, stop=["Observation:", f"Thought {count+1}"])
-            if llm_output=='OPENAI_ERROR':
-                st.write("Error Calling Azure Open AI, probably due to max service limit, please try again")
-                break
-            elif llm_output=='WRONG_OUTPUT_FORMAT': #just have open AI try again till the right output comes
-                count +=1
-                continue
-
-            new_input += f"\n{llm_output}"
-            for key, value in next_steps.items():
-                new_input += f"\n{value}"
-                
-                if "ACTION" in key.upper():
-                    if show_code:
-                        st.write(key)
-                        st.code(value)
-                    observations =[]
-                    serialized_obs=[]
-                    try:
-                        # if "print(" in value:
-                        #     raise Exception("You must not use print() statement, instead use st.write() to write to end user or observe(name, data) to view data yourself. Please regenerate the code")
-                        exec(value, locals())
-                        for key in self.st.session_state.keys():
-                            if "observation:" in key:
-                                observation=self.st.session_state[key]
-                                observations.append((key.split(":")[1],observation))
-                                if type(observation) is pd:
-                                    # serialized_obs.append((key.split(":")[1],observation.to_json(orient='records', date_format='iso')))
-                                    serialized_obs.append((key.split(":")[1],observation.to_string()))
-
-                                elif type(observation) is not Figure:
-                                    serialized_obs.append({key.split(":")[1]:str(observation)})
-                                del self.st.session_state[key]
-                    except Exception as e:
-                        observations.append(("Error:",str(e)))
-                        serialized_obs.append({"Encounter following error, can you try again?\n:":str(e)})
-                        
-                    for observation in observations:
-                        st.write(observation[0])
-                        st.write(observation[1])
-
-                    obs = f"\nObservation on the first 10 rows of data: {serialized_obs}"
-                    new_input += obs
-                else:
-                    st.write(key)
-                    st.write(value)
-                if "Answer" in key:
-                    print("Answer is given, finish")
-                    finish= True
-            if show_prompt:
-                self.st.write("Prompt")
-                self.st.write(self.conversation_history)
-
-            count +=1
-            if count>= max_steps:
-                print("Exceeding threshold, finish")
-                break
-
-    def query_run(self, question: str, show_code,show_prompt,st) -> any:
-        st.write(f"Question: {question}")
-        def execute_sql(query):
-            return self.sql_query_tool.execute_sql_query(query)
-        max_steps = 15
-        count =1
-
         new_input= f"Question: {question}"
         while count<= max_steps:
 
             llm_output,next_steps = self.get_next_steps(new_input, stop=["Observation:", f"Thought {count+1}"])
             if llm_output=='OPENAI_ERROR':
-                st.write("Error Calling Azure Open AI, probably due to max service limit, please try again")
+                st.write("Error Calling Azure Open AI, probably due to service limit, please try the question again")
                 break
             elif llm_output=='WRONG_OUTPUT_FORMAT': #just have open AI try again till the right output comes
                 count +=1
                 continue
-            output =None
+            run_ok =True
             error= False
+            # print("len of next_steps "+str(len(next_steps)))
+            for output in next_steps:
 
-            new_input += f"\n{llm_output}"
-            for key, value in next_steps.items():
-                new_input += f"\n{value}"
-                
-                if "SQL" in key.upper():
-                    if show_code:
-                        st.write("SQL Code")
-                        st.code(value)
-                    try:
-                        output = execute_sql(value)
-                    except Exception as e:
-                        
-                        new_input +="Encounter following error, can you try again?\n"+str(e)
-                        error=str(e)
-                else:
-                    if show_code:
-                        st.write(value)
+                comment= output.get("comment","")
+        
+                if len(comment)>0 and show_code:
+                    st.write(output["comment"])
+                    
+                new_input += comment
+                python_code = output.get("python","")
+                new_input += python_code
+                if len(python_code)>0 and show_code:
+                    st.write("Code")
+                    st.code(python_code)
+                try:
+                    exec(python_code, locals())
+                except Exception as e:
+                    new_input +="Encounter following error, can you try again?\n"+str(e)
+                    error=str(e)
+                    run_ok = False
+                if output.get("text_after") is not None and show_code:
+                    st.write(output["text_after"])
             if show_prompt:
                 self.st.write("Prompt")
                 self.st.write(self.conversation_history)
 
-            if output is not None:
-                st.write(output)
+            if run_ok:
                 break
 
             if error:
@@ -365,6 +303,8 @@ class AnalyzeGPT(ChatGPT_Handler):
             count +=1
             if count>= max_steps:
                 st.write("Cannot handle the question, please change the question and try again")
+        
+
         
 
 
