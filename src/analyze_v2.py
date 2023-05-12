@@ -15,71 +15,15 @@ import sqlalchemy as sql
 from plotly.graph_objects import Figure as PlotlyFigure
 from matplotlib.figure import Figure as MatplotFigure
 import time
-
-def get_table_schema(sql_query_tool, sql_engine='sqlite'):
-  
-  
-    # Define the SQL query to retrieve table and column information 
-    if sql_engine== 'sqlserver': 
-        sql_query = """  
-        SELECT C.TABLE_NAME, C.COLUMN_NAME, C.DATA_TYPE, T.TABLE_TYPE, T.TABLE_SCHEMA  
-        FROM INFORMATION_SCHEMA.COLUMNS C  
-        JOIN INFORMATION_SCHEMA.TABLES T ON C.TABLE_NAME = T.TABLE_NAME AND C.TABLE_SCHEMA = T.TABLE_SCHEMA  
-        WHERE T.TABLE_TYPE = 'BASE TABLE'  
-        """  
-    elif sql_engine=='sqlite':
-        sql_query = """    
-        SELECT m.name AS TABLE_NAME, p.name AS COLUMN_NAME, p.type AS DATA_TYPE  
-        FROM sqlite_master AS m  
-        JOIN pragma_table_info(m.name) AS p  
-        WHERE m.type = 'table'  
-        """  
-    else:
-        raise Exception("unsupported SQL engine, please manually update code to retrieve database schema")
-
-    # Execute the SQL query and store the results in a DataFrame  
-    df = sql_query_tool.execute_sql_query(sql_query, limit=None)  
-    output=[]
-    # Initialize variables to store table and column information  
-    current_table = ''  
-    columns = []  
-    
-    # Loop through the query results and output the table and column information  
-    for index, row in df.iterrows():
-        if sql_engine== 'sqlserver': 
-            table_name = f"{row['TABLE_SCHEMA']}.{row['TABLE_NAME']}"  
-        else:
-            table_name = f"{row['TABLE_NAME']}" 
-
-        column_name = row['COLUMN_NAME']  
-        data_type = row['DATA_TYPE']   
-        if " " in table_name:
-            table_name= f"[{table_name}]" 
-        column_name = row['COLUMN_NAME']  
-        if " " in column_name:
-            column_name= f"[{column_name}]" 
-
-        # If the table name has changed, output the previous table's information  
-        if current_table != table_name and current_table != '':  
-            output.append(f"table: {current_table}, columns: {', '.join(columns)}")  
-            columns = []  
-        
-        # Add the current column information to the list of columns for the current table  
-        columns.append(f"{column_name} {data_type}")  
-        
-        # Update the current table name  
-        current_table = table_name  
-    
-    # Output the last table's information  
-    output.append(f"table: {current_table}, columns: {', '.join(columns)}")
-    output = "\n ".join(output)
-    return output
+from typing import List
+import sys
+from io import StringIO
 def validate_output( llm_output,extracted_output):
     valid = False
     if (len(extracted_output)==0 and llm_output != "OPENAI_ERROR"):
         return False
     for output in extracted_output:
-        if "Finish" in output:
+        if "Final Answer:" in output:
             return True
         if len(output.get("python",""))!=0:
             valid= True
@@ -138,6 +82,7 @@ class SQL_Query(ChatGPT_Handler):
             {data_sources}
             {system_message}
             """
+        self.sql_engine =os.environ.get("SQL_ENGINE","sqlite")
         self.database=database
         self.dbserver=dbserver
         self.db_user = db_user
@@ -167,6 +112,103 @@ class SQL_Query(ChatGPT_Handler):
   
         # session.close()  
         return result  
+    def get_table_schema(self, table_names:List[str]):
+
+        # Create a comma-separated string of table names for the IN operator  
+        table_names_str = ','.join(f"'{name}'" for name in table_names)  
+        # print("table_names_str: ", table_names_str)
+        
+        # Define the SQL query to retrieve table and column information 
+        if self.sql_engine== 'sqlserver': 
+            sql_query = f"""  
+            SELECT C.TABLE_NAME, C.COLUMN_NAME, C.DATA_TYPE, T.TABLE_TYPE, T.TABLE_SCHEMA  
+            FROM INFORMATION_SCHEMA.COLUMNS C  
+            JOIN INFORMATION_SCHEMA.TABLES T ON C.TABLE_NAME = T.TABLE_NAME AND C.TABLE_SCHEMA = T.TABLE_SCHEMA  
+            WHERE T.TABLE_TYPE = 'BASE TABLE'  AND C.TABLE_NAME IN ({table_names_str})  
+            """  
+        elif self.sql_engine=='sqlite':
+            sql_query = f"""    
+            SELECT m.name AS TABLE_NAME, p.name AS COLUMN_NAME, p.type AS DATA_TYPE  
+            FROM sqlite_master AS m  
+            JOIN pragma_table_info(m.name) AS p  
+            WHERE m.type = 'table'  AND m.name IN ({table_names_str}) 
+            """  
+        else:
+            raise Exception("unsupported SQL engine, please manually update code to retrieve database schema")
+
+        # Execute the SQL query and store the results in a DataFrame  
+        df = self.execute_sql_query(sql_query, limit=None)  
+        output=[]
+        # Initialize variables to store table and column information  
+        current_table = ''  
+        columns = []  
+        
+        # Loop through the query results and output the table and column information  
+        for index, row in df.iterrows():
+            if self.sql_engine== 'sqlserver': 
+                table_name = f"{row['TABLE_SCHEMA']}.{row['TABLE_NAME']}"  
+            else:
+                table_name = f"{row['TABLE_NAME']}" 
+
+            column_name = row['COLUMN_NAME']  
+            data_type = row['DATA_TYPE']   
+            if " " in table_name:
+                table_name= f"[{table_name}]" 
+            column_name = row['COLUMN_NAME']  
+            if " " in column_name:
+                column_name= f"[{column_name}]" 
+
+            # If the table name has changed, output the previous table's information  
+            if current_table != table_name and current_table != '':  
+                output.append(f"table: {current_table}, columns: {', '.join(columns)}")  
+                columns = []  
+            
+            # Add the current column information to the list of columns for the current table  
+            columns.append(f"{column_name} {data_type}")  
+            
+            # Update the current table name  
+            current_table = table_name  
+        
+        # Output the last table's information  
+        output.append(f"table: {current_table}, columns: {', '.join(columns)}")
+        output = "\n ".join(output)
+        return output
+    def get_table_names(self):
+        
+        # Define the SQL query to retrieve table and column information 
+        if self.sql_engine== 'sqlserver': 
+            sql_query = """  
+            SELECT DISTINCT C.TABLE_NAME  
+            FROM INFORMATION_SCHEMA.COLUMNS C  
+            JOIN INFORMATION_SCHEMA.TABLES T ON C.TABLE_NAME = T.TABLE_NAME AND C.TABLE_SCHEMA = T.TABLE_SCHEMA  
+            WHERE T.TABLE_TYPE = 'BASE TABLE' 
+            """  
+        elif self.sql_engine=='sqlite':
+            sql_query = """    
+            SELECT DISTINCT m.name AS TABLE_NAME 
+            FROM sqlite_master AS m  
+            JOIN pragma_table_info(m.name) AS p  
+            WHERE m.type = 'table' 
+            """  
+        else:
+            raise Exception("unsupported SQL engine, please manually update code to retrieve database schema")
+
+        df = self.execute_sql_query(sql_query, limit=None)  
+        
+        output=[]
+        
+        # Loop through the query results and output the table and column information  
+        for index, row in df.iterrows():
+            if self.sql_engine== 'sqlserver': 
+                table_name = f"{row['TABLE_SCHEMA']}.{row['TABLE_NAME']}"  
+            else:
+                table_name = f"{row['TABLE_NAME']}" 
+
+            if " " in table_name:
+                table_name= f"[{table_name}]" 
+            output.append(table_name)  
+        
+        return output
 
 
 class AnalyzeGPT(ChatGPT_Handler):
@@ -174,13 +216,8 @@ class AnalyzeGPT(ChatGPT_Handler):
     def __init__(self,sql_engine,content_extractor, sql_query_tool, system_message,few_shot_examples,st,**kwargs) -> None:
         super().__init__(**kwargs)
             
-        
-
-        
-        table_schema = get_table_schema(sql_query_tool,sql_engine)
+        # table_names = sql_query_tool.get_table_schema()
         system_message = f"""
-        <<data_sources>>
-        {table_schema}
         {system_message.format(sql_engine=sql_engine)}
         {few_shot_examples}
         """
@@ -229,6 +266,11 @@ class AnalyzeGPT(ChatGPT_Handler):
     def python_run(self, question: str, show_code,show_prompt,st) -> any:
         import pandas as pd
         st.write(f"User: {question}")
+        def get_table_names():
+            return self.sql_query_tool.get_table_names()
+        def get_table_schema(table_names:List[str]):
+            return self.sql_query_tool.get_table_schema(table_names)
+
         def execute_sql(query):
             return self.sql_query_tool.execute_sql_query(query)
         # def print(data):
@@ -253,8 +295,8 @@ class AnalyzeGPT(ChatGPT_Handler):
         new_input= f"Question: {question}"
         error_msg=""
         while count<= max_steps:
-
-            llm_output,next_steps = self.get_next_steps(new_input, stop=["Observation:", f"Thought {count+1}"])
+            print("new_input :",new_input)
+            llm_output,next_steps = self.get_next_steps(new_input, stop=["Observation:"])
             if llm_output=='OPENAI_ERROR':
                 st.write("Error Calling Azure Open AI, probably due to service limit, please start over")
                 break
@@ -274,14 +316,21 @@ class AnalyzeGPT(ChatGPT_Handler):
                 python_code = output.get("python","")
                 new_input += python_code
                 if len(python_code)>0:
+                    old_stdout = sys.stdout
+                    sys.stdout = mystdout = StringIO()
+
                     if show_code:
                         st.write("Code")
                         st.code(python_code)
                     try:
                         exec(python_code, locals())
-
+                        sys.stdout = old_stdout
+                        std_out = str(mystdout.getvalue())
+                        if len(std_out)>0:
+                            new_input +="\nObservation:\n"+ std_out                   
                     except Exception as e:
-                        new_input +="\nEncounter following error:"+str(e)+"\nIf the error is about python bug, fix the python bug, if it's about SQL query, double check that you use the corect tables and columns name and query syntax, can you re-write the code?"
+                        new_input +="\nObservation: Encounter following error:"+str(e)+"\nIf the error is about python bug, fix the python bug, if it's about SQL query, double check that you use the corect tables and columns name and query syntax, can you re-write the code?"
+                        sys.stdout = old_stdout
                         run_ok = False
                         error_msg= str(e)
                 if output.get("text_after") is not None and show_code:
@@ -290,12 +339,12 @@ class AnalyzeGPT(ChatGPT_Handler):
                 self.st.write("Prompt")
                 self.st.write(self.conversation_history)
 
-            if run_ok:
-                break
-            else:
+            if not run_ok:
                 st.write(f"encountering error: {error_msg}, \nI will now retry")
 
             count +=1
+            if "Final Answer:" in llm_output:
+                break
             if count>= max_steps:
                 st.write("I am sorry, I cannot handle the question, please change the question and try again")
         
