@@ -1,4 +1,6 @@
 # Overview
+This is the accompanied repo for my blog post at: https://giangnt2.medium.com/automating-analytical-application-with-chatgpt-bdc8d193275
+
 This application demonstrates the of Open AI (ChatGPT/GPT-4) to help answer business questions by performing advanced data analytic tasks on a business database.
 Examples of questions are:
 - Simple: Show me daily revenue trends in 2016  per region
