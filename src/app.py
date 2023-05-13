@@ -5,8 +5,8 @@ import sys
 import numpy as np
 import plotly.express as px
 import plotly.graph_objs as go
-from data_preparer import SQL_Data_Preparer
-from data_analyzer import Data_Analyzer
+from data_engineer import SQL_Data_Preparer
+from data_scientist import Data_Analyzer
 import openai
 import streamlit as st  
 
