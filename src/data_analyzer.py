@@ -18,8 +18,7 @@ import time
 from typing import List
 import sys
 from io import StringIO
-from base_tool import ChatGPT_Handler, SQL_Query
-from data_preparer import SQL_Data_Preparer
+from base_tool import ChatGPT_Handler
 system_message="""
 You are data scientist to help answer business questions by writing python code to analyze and draw business insights.
 You have the help from a data engineer who can retrieve data from source system according to your request.
@@ -47,6 +46,8 @@ Action:
 ```python
 import pandas as pd
 import numpy as np
+#load data provided by data engineer
+step1_df = load("name_of_dataset")
 # Fill missing data
 step1_df['Some_Column'] = step1_df['Some_Column'].replace(np.nan, 0)
 #use pandas, statistical analysis or machine learning to analyze data to answer  business question
@@ -60,9 +61,9 @@ Action:
 import plotly.express as px 
 fig=px.line(step2_df)
 #visualize fig object to user.  
-show(fig)
+display(fig)
 #you can also directly display tabular or text data to end user.
-show(step2_df)
+display(step2_df)
 ```
 ... (this Thought/Action/Observation can repeat N times)
 Final Answer: Your final answer and comment for the question
@@ -85,13 +86,6 @@ class Data_Analyzer(ChatGPT_Handler):
     def run(self, question: str, data_preparer, show_code,show_prompt,st) -> any:
         import pandas as pd
         st.write(f"User: {question}")
-        def get_table_names():
-            return self.sql_query_tool.get_table_names()
-        def get_table_schema(table_names:List[str]):
-            return self.sql_query_tool.get_table_schema(table_names)
-
-        def execute_sql(query):
-            return self.sql_query_tool.execute_sql_query(query)
         def display(data):
             if type(data) is PlotlyFigure:
                 st.plotly_chart(data)
@@ -99,6 +93,11 @@ class Data_Analyzer(ChatGPT_Handler):
                 st.pyplot(data)
             else:
                 st.write(data)
+        def load(name):
+            return self.st.session_state[name]
+        def persist(name, data):
+            self.st.session_state[name]= data
+
         def observe(name, data):
             try:
                 data = data[:10] # limit the print out observation to 15 rows
@@ -114,7 +113,6 @@ class Data_Analyzer(ChatGPT_Handler):
         error_msg=""
         while count<= max_steps:
             llm_output,next_steps = self.get_next_steps(user_question= user_question, assistant_response =new_input, stop=["Observation:"])
-            
             user_question=""
             if llm_output=='OPENAI_ERROR':
                 st.write("Error Calling Azure Open AI, probably due to service limit, please start over")
@@ -124,14 +122,18 @@ class Data_Analyzer(ChatGPT_Handler):
                 continue
             new_input= "" #forget old history
             run_ok =True
-            # print("len of next_steps "+str(len(next_steps)))
-            for output in next_steps:
-                request = output.get("request_to_data_engineer", "")
+            if len(next_steps)>0:
+                request = next_steps[0].get("request_to_data_engineer", "")
                 if len(request)>0:
                     data_output =data_preparer.run(request,show_code,show_prompt,st)
-                    new_input= "Observation: this is the output from data engineer\n"+data_output
-                    continue
+                    if data_output is not None: #Data is returned from data engineer
+                        new_input= "Observation: this is the output from data engineer\n"+data_output
+                        continue
+                    else:
+                        st.write("I am sorry, we cannot accquire data from source system, please try again")
+                        break
 
+            for output in next_steps:
                 comment= output.get("comment","")
         
                 if len(comment)>0 and show_code:
@@ -169,9 +171,8 @@ class Data_Analyzer(ChatGPT_Handler):
                 st.write(f"encountering error: {error_msg}, \nI will now retry")
 
             count +=1
-            if "Final Answer:" in llm_output:
+            if "Final Answer:" in llm_output or len(llm_output)==0:
                 final_output= output.get("comment","")+output.get("text_after","")+output.get("text_after","")
-                print("final output")
                 return final_output
             if count>= max_steps:
                 st.write("I am sorry, I cannot handle the question, please change the question and try again")

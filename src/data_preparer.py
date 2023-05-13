@@ -37,6 +37,7 @@ You are given following utility functions to use in your code help you retrieve 
         - From the tables you identified and their schema, create a sql query which has to be syntactically correct for {sql_engine} to retrieve data from the source system.
         - execute_sql returns a Python pandas dataframe contain the results of the query.
     4. print(): use print() if you need to observe data for yourself. 
+    5. save("name", data): to persist dataset for later use
 Here is a specific <<Template>> to follow:
 """
 
@@ -65,9 +66,11 @@ extracted_data = execute_sql(sql_query)
 #observe query result
 print("Here is the summary of the final extracted dataset: ")
 print(extracted_data.describe())
+#save the data for later use
+save("name_of_dataset", extracted_data)
 ```
 Observation: extracted_data seems to be ready
-Final Answer: name of dataset variable, attributes and summary statistics
+Final Answer: Hey, data scientist, here is name of dataset, attributes and summary statistics
 <<Template>>
 """
 extract_patterns=[('python',r"```python\n(.*?)```")]
@@ -89,9 +92,9 @@ class SQL_Data_Preparer(ChatGPT_Handler):
         """
         self.conversation_history =  [{"role": "system", "content": formatted_system_message}]
         self.st = st
-    def run(self, question: str, show_code,show_prompt,st) -> any:
+    def run(self, question: str, show_code,show_prompt,st) -> str:
         import pandas as pd
-        st.write(f"User: {question}")
+        st.write(f"Request to prepare data: {question}")
         def get_table_names():
             return self.sql_query_tool.get_table_names()
         def get_table_schema(table_names:List[str]):
@@ -106,6 +109,11 @@ class SQL_Data_Preparer(ChatGPT_Handler):
                 st.pyplot(data)
             else:
                 st.write(data)
+        def load(name):
+            return self.st.session_state[name]
+        def save(name, data):
+            self.st.session_state[name]= data
+
         def observe(name, data):
             try:
                 data = data[:10] # limit the print out observation to 15 rows
@@ -131,14 +139,8 @@ class SQL_Data_Preparer(ChatGPT_Handler):
                 continue
             new_input= "" #forget old history
             run_ok =True
-            # print("len of next_steps "+str(len(next_steps)))
             for output in next_steps:
-
                 comment= output.get("comment","")
-        
-                if len(comment)>0 and show_code:
-                    st.write(output["comment"])
-                    
                 new_input += comment
                 python_code = output.get("python","")
                 new_input += python_code
@@ -146,9 +148,9 @@ class SQL_Data_Preparer(ChatGPT_Handler):
                     old_stdout = sys.stdout
                     sys.stdout = mystdout = StringIO()
 
-                    if show_code:
-                        st.write("Code")
-                        st.code(python_code)
+                    # if show_code:
+                    #     st.write("Code")
+                    #     st.code(python_code)
                     try:
                         exec(python_code, locals())
                         sys.stdout = old_stdout
@@ -161,8 +163,8 @@ class SQL_Data_Preparer(ChatGPT_Handler):
                         sys.stdout = old_stdout
                         run_ok = False
                         error_msg= str(e)
-                if output.get("text_after") is not None and show_code:
-                    st.write(output["text_after"])
+                # if output.get("text_after") is not None and show_code:
+                #     st.write(output["text_after"])
             if show_prompt:
                 self.st.write("Prompt")
                 self.st.write(self.conversation_history)
@@ -173,10 +175,10 @@ class SQL_Data_Preparer(ChatGPT_Handler):
             count +=1
             if "Final Answer:" in llm_output:
                 final_output= output.get("comment","")+output.get("text_after","")+output.get("text_after","")
-                print("final output")
                 return final_output
             if count>= max_steps:
                 st.write("I am sorry, I cannot handle the question, please change the question and try again")
+
         
 
         

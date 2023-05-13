@@ -5,31 +5,14 @@ import sys
 import numpy as np
 import plotly.express as px
 import plotly.graph_objs as go
-from analyze import AnalyzeGPT, SQL_Query, ChatGPT_Handler
+from data_preparer import SQL_Data_Preparer
+from data_analyzer import Data_Analyzer
 import openai
 import streamlit as st  
 
 from dotenv import load_dotenv
 
 from pathlib import Path  # Python 3.6+ only
-
-system_message="""
-You are a Open AI assistant to help answer business questions by writing python code to analyze data. 
-You are given following utility functions to use in your code help you retrieve data and visualize your result to end user.
-    1. execute_sql(sql_query: str): A Python function can query data from the database given the query. 
-        - You need to utilize the tables' schema provided under <<data_sources>> in preparing the query.
-        - Only use tables and columns that are specified in the <<data_sources>>
-        - To use this function that you need to create a sql query which has to be syntactically correct for {sql_engine}. 
-        - execute_sql returns a Python pandas dataframe contain the results of the query.
-    2. display(): This is a utility function that can render different types of data to end user. 
-        - If you want to show  user a plotly visualization, then use ```display(fig)`` 
-        - If you want to show user data which is a text or a pandas dataframe or a list, use ```display(data)```
-Remember to format Python code query as in ```python\n PYTHON CODE HERE ``` in your response.
-Only use display() to visualize or print out result. Only use plotly for visualization.
-"""
-few_shot_examples=""
-# Your final answer and comment for the question. Remember you cannot observe graphic chart, so always observe from python or pandas data object.
-# You also cannot see more than 10 rows of data, so rely on summary statistics. Alsways use Python for computation, never compute result youself.
 
 env_path = Path('.') / 'secrets.env'
 load_dotenv(dotenv_path=env_path)
@@ -43,12 +26,10 @@ temperature=0
 
 sqllite_db_path= os.environ.get("SQLITE_DB_PATH","data/northwind.db")
 
-# extract_patterns=[("Thought:",r'(Thought \d+):\s*(.*?)(?:\n|$)'), ('Action:',r"```python\n(.*?)```")]
-extract_patterns=[('python',r"```python\n(.*?)```")]
-extractor = ChatGPT_Handler(extract_patterns=extract_patterns)
+
 faq_dict = {  
     "ChatGPT": [  
-        "Show me daily revenue trends in 2016 across product categories. Have a category dropdown filter for the chart.",  
+        "Show me daily revenue trends in 2016 across product categories",  
         "Is that true that top 20% customers generate 80% revenue in 2016? What's their percentage of revenue contribution?",  
         "Which products have most seasonality in sales quantity in 2016?",  
         "Which customers are most likely to churn?", 
@@ -132,14 +113,11 @@ with st.sidebar:
         database = load_setting("SQL_DATABASE")
         db_user = load_setting("SQL_USER")
         db_password = load_setting("SQL_PASSWORD")
-        if sql_engine =="sqlserver":
-            #TODO: Handle if there is not a driver here
-            sql_query_tool = SQL_Query(driver='ODBC Driver 17 for SQL Server',dbserver=dbserver, database=database, db_user=db_user ,db_password=db_password)
-        else:
-            sql_query_tool = SQL_Query(db_path=sqllite_db_path)
-
-        analyzer = AnalyzeGPT(sql_engine=sql_engine,content_extractor= extractor, sql_query_tool=sql_query_tool,  system_message=system_message, few_shot_examples=few_shot_examples,st=st,  
-                            gpt_deployment=gpt_engine,max_response_tokens=max_response_tokens,token_limit=token_limit,  
+        data_preparer = SQL_Data_Preparer(sql_engine=sql_engine,st=st,dbserver=dbserver,db_path=sqllite_db_path, database=database, db_user=db_user ,db_password=db_password,  
+                            gpt_deployment=gpt_engine,max_response_tokens=max_response_tokens,token_limit=token_limit,
+                            temperature=temperature)  
+        
+        analyzer = Data_Analyzer(st=st,gpt_deployment=gpt_engine,max_response_tokens=max_response_tokens,token_limit=token_limit,
                             temperature=temperature)  
 
     show_code = st.checkbox("Show code", value=False)  
@@ -157,4 +135,4 @@ with st.sidebar:
                 if "AZURE_OPENAI" not in key and "settings" and "SQL" not in key : 
                     del st.session_state[key]  
 
-            analyzer.python_run(question,show_code,show_prompt, col1)  
+            analyzer.run(question,data_preparer,show_code,show_prompt, col1)  

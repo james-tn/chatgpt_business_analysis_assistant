@@ -78,7 +78,7 @@ class ChatGPT_Handler: #designed for chatcompletion API
                 elif "request_to_data_engineer" in pattern[1]:
                     request = re.findall(pattern[1], text_input, re.DOTALL)
                     if len(request)>0:
-                        outputs.append({"request_to_data_engineer":request})
+                        outputs.append({"request_to_data_engineer":request[0]})
 
             return outputs
     def get_next_steps(self, user_question, assistant_response, stop):
@@ -92,7 +92,6 @@ class ChatGPT_Handler: #designed for chatcompletion API
         n=0
         try:
             llm_output = self._call_llm(self.conversation_history, stop)
-            # print("llm_output \n", llm_output)
 
         except Exception as e:
             if "maximum context length" in str(e):
@@ -113,6 +112,8 @@ class ChatGPT_Handler: #designed for chatcompletion API
              
     
         outputs = self.extract_output(llm_output)
+        if len(llm_output)==0:
+            return "",[]
         if not validate_output(llm_output, outputs): #wrong output format
             llm_output = "WRONG_OUTPUT_FORMAT"
         return llm_output,outputs
